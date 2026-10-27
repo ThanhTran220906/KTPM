@@ -1,147 +1,256 @@
+# gateway-lab — API Gateway với Docker Compose
 
-# Gateway Lab
+> Bài tập Kiến trúc phần mềm: API Gateway cho User và Order Service, JWT Authentication, Rate Limiting, Aggregation API và Valet Key.
 
-Bài lab kiến trúc phần mềm: API Gateway, Routing và microservices.
+## 1. Mục tiêu
 
-## 1. Yêu cầu môi trường
+- Định tuyến request đến User Service và Order Service.
+- Xác thực request bằng JWT thông qua Auth Service và Nginx `auth_request`.
+- Giới hạn tốc độ request theo IP bằng Nginx Rate Limiting.
+- Tổng hợp dữ liệu user và orders qua Gateway API.
+- Cấp Valet Key có thời hạn và giới hạn theo tài nguyên để đọc một đơn hàng.
 
-- Docker Engine hoặc Docker Desktop.
-- Docker Compose v2.
-- Các cổng 8080, 8001, 8002 chưa bị ứng dụng khác chiếm dụng.
+## 2. Sơ đồ kiến trúc
 
-Không cần cài Python trên máy host.
+```mermaid
+flowchart TB
+    Client[Client / curl]
+    Gateway[Nginx API Gateway :8080]
+    Auth[Auth Service]
+    API[Gateway API]
+    User[User Service]
+    Order[Order Service]
 
-## 2. Khởi chạy
-
-Chạy tại thư mục gateway-lab:
-
-```bash
-docker compose up --build -d
+    Client -->|HTTP| Gateway
+    Gateway -->|POST /auth/token| Auth
+    Gateway -->|auth_request /_auth| Auth
+    Gateway -->|/users and /users/*| User
+    Gateway -->|/orders and /orders/*| Order
+    Gateway -->|/users/{id}/summary| API
+    Gateway -->|/valet-keys/orders/{id}| API
+    Gateway -->|/valet/orders/{id}| API
+    API -->|GET user| User
+    API -->|GET orders by user_id| Order
 ```
 
-Kiểm tra trạng thái:
+## 3. Thành phần
 
-```bash
+| Thành phần | Vai trò | Cổng |
+|---|---|---|
+| `gateway` | Nginx reverse proxy, routing, `auth_request`, rate limiting | Host `8080` |
+| `auth-service` | Cấp và xác minh JWT access token | Nội bộ Docker network |
+| `gateway-api` | Aggregation API, cấp/kiểm tra Valet Key | Nội bộ Docker network |
+| `user-service` | API user | Host `8001`, container `8000` |
+| `order-service` | API order | Host `8002`, container `8000` |
+| `backend` | Docker bridge network | Nội bộ |
+
+> Các cổng `8001` và `8002` được publish theo cấu hình hiện tại để thuận tiện phát triển. Khi triển khai thực tế, nên cân nhắc chỉ expose Gateway.
+
+## 4. Cấu trúc thư mục dự kiến
+
+Đối chiếu với repository thực tế trước khi nộp.
+
+```text
+gateway-lab/
+├── docker-compose.yml
+├── .env.example
+├── README.md
+├── gateway/
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── nginx.benchmark.conf
+├── auth-service/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app/main.py
+├── gateway-api/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app/main.py
+├── user-service/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app/
+└── order-service/
+    ├── Dockerfile
+    ├── requirements.txt
+    └── app/
+```
+
+## 5. Yêu cầu và cấu hình
+
+- Docker Desktop đang chạy.
+- Docker Compose v2 (`docker compose`).
+- Windows CMD hoặc terminal tương đương.
+
+Sử dụng `.env` để cấu hình secrets; không commit `.env`, mật khẩu thật hoặc JWT vào Git. Thay secret mặc định bằng chuỗi ngẫu nhiên đủ dài trước khi chạy trong môi trường dùng chung.
+
+Ví dụ `.env.example`:
+
+```dotenv
+JWT_SECRET=replace-with-a-long-random-secret
+DEMO_USERNAME=demo
+DEMO_PASSWORD=change-this-demo-password
+```
+
+## 6. Chạy dự án
+
+Từ thư mục gốc `gateway-lab`:
+
+```cmd
+docker compose config --services
+docker compose up -d --build
 docker compose ps
-docker compose logs -f gateway user-service order-service
+docker compose exec gateway nginx -t
+curl.exe -i http://localhost:8080/health
 ```
+
+Danh sách service dự kiến: `user-service`, `order-service`, `auth-service`, `gateway-api`, `gateway`.
 
 Dừng hệ thống:
 
-```bash
+```cmd
 docker compose down
 ```
 
-## 3. Kiểm tra healthcheck
+Xem log:
 
-```bash
-curl -i http://localhost:8080/health
-curl -i http://localhost:8001/health
-curl -i http://localhost:8002/health
+```cmd
+docker compose logs --tail=100 gateway
+docker compose logs --tail=100 auth-service
+docker compose logs --tail=100 gateway-api
+docker compose logs --tail=100 user-service
+docker compose logs --tail=100 order-service
 ```
 
-Kết quả mong đợi: HTTP 200 và JSON có trường `status: ok`.
+## 7. API chính
 
-## 4. Routing: User Service
+| Method | Endpoint | Mô tả | Xác thực |
+|---|---|---|---|
+| `GET` | `/health` | Health check Gateway | Không |
+| `POST` | `/auth/token` | Lấy access token demo | Thông tin đăng nhập demo |
+| `GET` | `/users` | Danh sách user | Access token |
+| `GET` | `/users/{user_id}` | Chi tiết user | Access token |
+| `POST` | `/users` | Tạo user | Access token |
+| `GET` | `/orders` | Danh sách order, có thể lọc `user_id` | Access token |
+| `GET` | `/orders/{order_id}` | Chi tiết order | Access token |
+| `POST` | `/orders` | Tạo order | Access token |
+| `GET` | `/users/{user_id}/summary` | Tổng hợp user và orders | Access token |
+| `POST` | `/valet-keys/orders/{order_id}` | Cấp Valet Key | Access token |
+| `GET` | `/valet/orders/{order_id}` | Đọc order bằng Valet Key | Valet Key phù hợp |
 
-Lấy danh sách user qua gateway:
+Đối chiếu bảng endpoint với source code cuối trước khi nộp.
 
-```bash
-curl -i http://localhost:8080/users
+## 8. Kiểm thử thủ công trên Windows CMD
+
+### 8.1 Lấy access token
+
+Tạo `login.json` nếu chưa có:
+
+```cmd
+echo {"username":"demo","password":"demo123"} > login.json
 ```
 
-Lấy user ID 1 qua gateway:
+Lấy token:
 
-```bash
-curl -i http://localhost:8080/users/1
+```cmd
+curl.exe -s -X POST "http://localhost:8080/auth/token" -H "Content-Type: application/json" --data-binary "@login.json"
 ```
 
-Gọi trực tiếp User Service:
+Sao chép `access_token` trong JSON rồi gán:
 
-```bash
-curl -i http://localhost:8001/users
-curl -i http://localhost:8001/users/1
+```cmd
+set "TOKEN=PASTE_ACCESS_TOKEN_HERE"
 ```
 
-Tạo user mới:
+Không gửi token lên báo cáo hoặc Git.
 
-```bash
-curl -i -X POST http://localhost:8080/users \
-  -H "Content-Type: application/json" \
-  -d '{"name":"David Pham","email":"david@example.com","role":"user"}'
+### 8.2 API nghiệp vụ
+
+```cmd
+curl.exe -i -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/users"
+curl.exe -i -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/users/1"
+curl.exe -i -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/orders"
+curl.exe -i -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/orders?user_id=1"
 ```
 
-## 5. Routing: Order Service
+### 8.3 Aggregation API
 
-Lấy toàn bộ đơn hàng:
-
-```bash
-curl -i http://localhost:8080/orders
+```cmd
+curl.exe -i -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/users/1/summary"
 ```
 
-Lấy đơn hàng ID 1:
+Kỳ vọng `200 OK`, gồm user, orders và tổng số order.
 
-```bash
-curl -i http://localhost:8080/orders/1
+### 8.4 Valet Key
+
+Cấp Valet Key cho order số 2:
+
+```cmd
+curl.exe -s -X POST -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/valet-keys/orders/2"
 ```
 
-Lọc đơn hàng của user ID 1:
+Sao chép toàn bộ `access_token` trong phản hồi rồi gán:
 
-```bash
-curl -i "http://localhost:8080/orders?user_id=1"
+```cmd
+set "VALET_TOKEN=PASTE_WHOLE_VALET_TOKEN_HERE"
 ```
 
-Gọi trực tiếp Order Service:
+Đọc đúng order:
 
-```bash
-curl -i http://localhost:8002/orders
-curl -i "http://localhost:8002/orders?user_id=1"
+```cmd
+curl.exe -i -H "Authorization: Bearer %VALET_TOKEN%" "http://localhost:8080/valet/orders/2"
 ```
 
-Tạo đơn hàng:
+Đọc order khác:
 
-```bash
-curl -i -X POST http://localhost:8080/orders \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":1,"item":"USB Cable","quantity":2,"amount":9.99,"status":"pending"}'
+```cmd
+curl.exe -i -H "Authorization: Bearer %VALET_TOKEN%" "http://localhost:8080/valet/orders/1"
 ```
 
-## 6. Kiểm tra lỗi định tuyến
+Dùng Valet Key cho API thông thường:
 
-```bash
-curl -i http://localhost:8080/unknown
-curl -i http://localhost:8080/users/999
-curl -i http://localhost:8080/orders/999
+```cmd
+curl.exe -i -H "Authorization: Bearer %VALET_TOKEN%" "http://localhost:8080/users"
 ```
 
-Các request không có route phù hợp sẽ nhận HTTP 404. User hoặc order không tồn tại cũng nhận HTTP 404 từ service tương ứng.
+Kết quả dự kiến lần lượt: `200`, `403`, `401`. Valet Key có TTL mặc định 300 giây.
 
-## 7. Kiểm tra Nginx access log
+### 8.5 Rate limiting
 
-```bash
-docker compose logs gateway
+```cmd
+for /L %i in (1,1,50) do @curl.exe -s -o NUL -w "%{http_code}\n" -H "Authorization: Bearer %TOKEN%" "http://localhost:8080/users"
 ```
 
-Hoặc đọc log trực tiếp trong container:
+Một lần kiểm thử trước đó ghi nhận 29 phản hồi `200` và 21 phản hồi `429`. Kết quả có thể thay đổi theo thời điểm và cấu hình.
 
-```bash
-docker compose exec gateway \
-  cat /var/log/nginx/access.log
-```
+## 9. Bằng chứng kiểm thử
 
-Các trường cần chú ý:
+Lưu ảnh/log trong thư mục `evidence/`. Nên có:
+1. `docker compose ps`
+2. `docker compose exec gateway nginx -t`
+3. `/users` và `/orders` trả `200`
+4. Request thiếu token bị từ chối
+5. Rate limiting trả `429`
+6. Aggregation API trả dữ liệu
+7. Valet Key: đúng order `200`, order khác `403`, dùng token cho `/users` `401`
 
-- `request_time`: tổng thời gian Nginx xử lý request.
-- `upstream_response_time`: thời gian chờ upstream phản hồi.
-- `upstream_addr`: địa chỉ upstream được chọn.
-- `status`: mã HTTP trả về client.
+Che token và mật khẩu trong ảnh chụp. Bảng theo dõi chi tiết ở `docs/test-report.md`.
 
-## 8. Các giới hạn của Giai đoạn 1
+## 10. Giới hạn và hướng phát triển
 
-- Chưa có JWT hoặc endpoint đăng nhập.
-- Chưa có rate limiting.
-- Chưa có Aggregation `/dashboard`.
-- Chưa có MinIO hoặc upload avatar.
-- Dữ liệu user/order được lưu trong RAM và không bền vững sau khi container khởi động lại.
+- Tài khoản demo chỉ phục vụ kiểm thử.
+- Nên bổ sung kiểm tra quyền sở hữu order theo user.
+- Dùng secret mạnh và TLS khi triển khai thực tế.
+- Có thể bổ sung circuit breaker, caching, metrics/tracing và kiểm thử tải.
+- Rate limiting theo IP là cấu hình cơ bản, cần đánh giá thêm sau reverse proxy/load balancer.
 
-Các chức năng này sẽ được bổ sung ở các giai đoạn tiếp theo.
+## 11. Checklist trước khi nộp
+
+- [ ] `docker compose config` không có lỗi.
+- [ ] Các service khởi động và healthcheck ổn định.
+- [ ] Đối chiếu danh sách API với source code.
+- [ ] Chạy lại toàn bộ test trong `docs/test-report.md`.
+- [ ] Lưu ảnh/log vào `evidence/`.
+- [ ] Không có JWT, mật khẩu thật hoặc `.env` trong repository.
+- [ ] Bổ sung thông tin người thực hiện/lớp/ngày nộp theo yêu cầu giảng viên.

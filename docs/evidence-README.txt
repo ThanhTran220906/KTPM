@@ -1,0 +1,3 @@
+Tao thu muc evidence/ trong repository goc va dat anh/log kiem thu tai day.
+Khong de lo JWT, mat khau hoac secret trong anh chup.
+Ten file goi y: T01-compose-services.png, T02-compose-ps.png, ...
