@@ -12,7 +12,7 @@
 
 ## 2. Sơ đồ kiến trúc
 
-```mermaid
+```
     Client -->|HTTP| Gateway
     Gateway -->|POST /auth/token| Auth
     Gateway -->|auth_request /_auth| Auth
