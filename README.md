@@ -13,14 +13,6 @@
 ## 2. Sơ đồ kiến trúc
 
 ```mermaid
-flowchart TB
-    Client[Client / curl]
-    Gateway[Nginx API Gateway :8080]
-    Auth[Auth Service]
-    API[Gateway API]
-    User[User Service]
-    Order[Order Service]
-
     Client -->|HTTP| Gateway
     Gateway -->|POST /auth/token| Auth
     Gateway -->|auth_request /_auth| Auth
@@ -223,34 +215,3 @@ for /L %i in (1,1,50) do @curl.exe -s -o NUL -w "%{http_code}\n" -H "Authorizati
 ```
 
 Một lần kiểm thử trước đó ghi nhận 29 phản hồi `200` và 21 phản hồi `429`. Kết quả có thể thay đổi theo thời điểm và cấu hình.
-
-## 9. Bằng chứng kiểm thử
-
-Lưu ảnh/log trong thư mục `evidence/`. Nên có:
-1. `docker compose ps`
-2. `docker compose exec gateway nginx -t`
-3. `/users` và `/orders` trả `200`
-4. Request thiếu token bị từ chối
-5. Rate limiting trả `429`
-6. Aggregation API trả dữ liệu
-7. Valet Key: đúng order `200`, order khác `403`, dùng token cho `/users` `401`
-
-Che token và mật khẩu trong ảnh chụp. Bảng theo dõi chi tiết ở `docs/test-report.md`.
-
-## 10. Giới hạn và hướng phát triển
-
-- Tài khoản demo chỉ phục vụ kiểm thử.
-- Nên bổ sung kiểm tra quyền sở hữu order theo user.
-- Dùng secret mạnh và TLS khi triển khai thực tế.
-- Có thể bổ sung circuit breaker, caching, metrics/tracing và kiểm thử tải.
-- Rate limiting theo IP là cấu hình cơ bản, cần đánh giá thêm sau reverse proxy/load balancer.
-
-## 11. Checklist trước khi nộp
-
-- [ ] `docker compose config` không có lỗi.
-- [ ] Các service khởi động và healthcheck ổn định.
-- [ ] Đối chiếu danh sách API với source code.
-- [ ] Chạy lại toàn bộ test trong `docs/test-report.md`.
-- [ ] Lưu ảnh/log vào `evidence/`.
-- [ ] Không có JWT, mật khẩu thật hoặc `.env` trong repository.
-- [ ] Bổ sung thông tin người thực hiện/lớp/ngày nộp theo yêu cầu giảng viên.
